@@ -65,6 +65,18 @@ final class NowPlayingController: ObservableObject, MediaControllerProtocol {
     private let MRMediaRemoteSetShuffleModeFunction: @convention(c) (Int) -> Void
     private let MRMediaRemoteSetRepeatModeFunction: @convention(c) (Int) -> Void
 
+    // For multi-app switching
+    // MRMediaRemoteGetNowPlayingClients(queue, callback) - async callback style
+    typealias MRGetNowPlayingClientsType = @convention(c) (AnyObject, @convention(block) ([AnyObject]) -> Void) -> Void
+    var MRMediaRemoteGetNowPlayingClientsFunction: MRGetNowPlayingClientsType?
+    // MRMediaRemoteSetCandidateNowPlayingApplication(app) - takes an MRNowPlayingApplication
+    typealias MRSetCandidateAppType = @convention(c) (AnyObject) -> Void
+    var MRMediaRemoteSetCandidateAppFunction: MRSetCandidateAppType?
+
+    // Cached client list (MRNowPlayingApplication objects)
+    private var cachedClients: [AnyObject] = []
+    private var currentClientIndex: Int = 0
+
     private var process: Process?
     private var pipeHandler: JSONLinesPipeHandler?
     private var streamTask: Task<Void, Never>?
@@ -95,6 +107,14 @@ final class NowPlayingController: ObservableObject, MediaControllerProtocol {
             MRMediaRemoteSetShuffleModePointer, to: (@convention(c) (Int) -> Void).self)
         MRMediaRemoteSetRepeatModeFunction = unsafeBitCast(
             MRMediaRemoteSetRepeatModePointer, to: (@convention(c) (Int) -> Void).self)
+
+        // Load optional multi-app switching functions
+        if let ptr = CFBundleGetFunctionPointerForName(bundle, "MRMediaRemoteGetNowPlayingClients" as CFString) {
+            MRMediaRemoteGetNowPlayingClientsFunction = unsafeBitCast(ptr, to: MRGetNowPlayingClientsType.self)
+        }
+        if let ptr = CFBundleGetFunctionPointerForName(bundle, "MRMediaRemoteSetCandidateNowPlayingApplication" as CFString) {
+            MRMediaRemoteSetCandidateAppFunction = unsafeBitCast(ptr, to: MRSetCandidateAppType.self)
+        }
 
         Task { await setupNowPlayingObserver() }
     }
@@ -144,6 +164,46 @@ final class NowPlayingController: ObservableObject, MediaControllerProtocol {
     }
 
     func isActive() -> Bool {
+        return true
+    }
+
+    // MARK: - Multi-App Switching
+    func switchToNextClient(direction: Int) -> Bool {
+        guard let fn = MRMediaRemoteGetNowPlayingClientsFunction,
+              let setFn = MRMediaRemoteSetCandidateAppFunction else {
+            return false
+        }
+
+        // Use a semaphore to get clients synchronously (with timeout)
+        let semaphore = DispatchSemaphore(value: 0)
+        var clients: [AnyObject] = []
+
+        let queue = DispatchQueue.global(qos: .userInitiated)
+        fn(queue as AnyObject) { result in
+            clients = result
+            semaphore.signal()
+        }
+
+        // Wait max 0.5s for the callback
+        let result = semaphore.wait(timeout: .now() + 0.5)
+        guard result == .success, clients.count > 1 else {
+            return false
+        }
+
+        cachedClients = clients
+        // Clamp currentClientIndex
+        currentClientIndex = min(currentClientIndex, clients.count - 1)
+
+        let nextIndex: Int
+        if direction > 0 {
+            nextIndex = (currentClientIndex + 1) % clients.count
+        } else {
+            nextIndex = (currentClientIndex - 1 + clients.count) % clients.count
+        }
+
+        let nextClient = clients[nextIndex]
+        setFn(nextClient)
+        currentClientIndex = nextIndex
         return true
     }
     

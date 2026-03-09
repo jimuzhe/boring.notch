@@ -15,6 +15,8 @@ import SwiftUIIntrospect
 
 @MainActor
 struct ContentView: View {
+    @State private var switchCooldown = false
+
     @EnvironmentObject var vm: BoringViewModel
     @ObservedObject var webcamManager = WebcamManager.shared
 
@@ -23,6 +25,7 @@ struct ContentView: View {
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var brightnessManager = BrightnessManager.shared
     @ObservedObject var volumeManager = VolumeManager.shared
+    @ObservedObject var focusManager = FocusManager.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
@@ -75,6 +78,8 @@ struct ContentView: View {
             && !vm.hideOnClosed
         {
             chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
+        } else if focusManager.state != .idle && vm.notchState == .closed && !vm.hideOnClosed {
+            chinWidth += 100
         }
 
         return chinWidth
@@ -138,6 +143,12 @@ struct ContentView: View {
                         view
                             .panGesture(direction: .down) { translation, phase in
                                 handleDownGesture(translation: translation, phase: phase)
+                            }
+                            .panGesture(direction: .left) { translation, phase in
+                                handleHorizontalGesture(translation: translation, phase: phase, direction: .left)
+                            }
+                            .panGesture(direction: .right) { translation, phase in
+                                handleHorizontalGesture(translation: translation, phase: phase, direction: .right)
                             }
                     }
                     .conditionalModifier(Defaults[.closeGestureEnabled] && Defaults[.enableGestures]) { view in
@@ -288,9 +299,23 @@ struct ContentView: View {
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
                           MusicLiveActivity()
                               .frame(alignment: .center)
-                      } else if !coordinator.expandingView.show && vm.notchState == .closed && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace] && !vm.hideOnClosed  {
-                          BoringFaceAnimation()
-                       } else if vm.notchState == .open {
+                        } else if focusManager.state != .idle && vm.notchState == .closed && !vm.hideOnClosed {
+                            HStack(spacing: 6) {
+                                Image(systemName: focusManager.state == .resting ? "cup.and.saucer.fill" : "timer")
+                                    .foregroundColor(focusManager.state == .resting ? .green : .orange)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .contentTransition(.symbolEffect)
+                                Text(focusManager.formatTime(focusManager.secondsElapsed))
+                                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.white)
+                                    .fixedSize()
+                            }
+                            .frame(height: vm.effectiveClosedNotchHeight)
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 8)
+                        } else if !coordinator.expandingView.show && vm.notchState == .closed && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace] && !vm.hideOnClosed  {
+                            BoringFaceAnimation()
+                        } else if vm.notchState == .open {
                            BoringHeader()
                                .frame(height: max(24, vm.effectiveClosedNotchHeight))
                                .opacity(gestureProgress != 0 ? 1.0 - min(abs(gestureProgress) * 0.1, 0.3) : 1.0)
@@ -345,6 +370,8 @@ struct ContentView: View {
                     switch coordinator.currentView {
                     case .home:
                         NotchHomeView(albumArtNamespace: albumArtNamespace)
+                    case .focus:
+                        FocusExpandedView()
                     case .shelf:
                         ShelfView()
                     }
@@ -604,6 +631,35 @@ struct ContentView: View {
 
             if Defaults[.enableHaptics] {
                 haptics.toggle()
+            }
+        }
+    }
+
+    private func handleHorizontalGesture(translation: CGFloat, phase: NSEvent.Phase, direction: PanDirection) {
+        guard vm.notchState == .open else { return }
+        guard Defaults[.changeMediaWithHorizontalGestures] else { 
+            NSLog("[HorizontalGesture] Gestures disabled in settings.")
+            return 
+        }
+
+        // Track that a real swipe (changed) exceeded the threshold before we act on ended
+        let sensitivity = max(Defaults[.gestureSensitivity] * 0.4, 20.0)
+
+        if phase == .changed && translation >= sensitivity {
+            // Mark that a significant swipe has occurred in this direction
+            if !switchCooldown {
+                NSLog("[HorizontalGesture] Triggering switch. Direction: \(direction), Phase: changed")
+                switchCooldown = true
+                // Perform the switch immediately when threshold is crossed
+                if musicManager.switchToNextController(direction: direction) {
+                    if Defaults[.enableHaptics] {
+                        haptics.toggle()
+                    }
+                }
+                // Reset cooldown after delay so rapid re-triggers are blocked
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    switchCooldown = false
+                }
             }
         }
     }

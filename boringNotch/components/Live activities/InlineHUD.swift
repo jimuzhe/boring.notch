@@ -47,6 +47,10 @@ struct InlineHUD: View {
                                 .symbolVariant(value > 0 ? .none : .slash)
                                 .contentTransition(.interpolate)
                                 .frame(width: 20, height: 15, alignment: .center)
+                        case .health:
+                            Image(systemName: icon)
+                                .contentTransition(.symbolEffect)
+                                .frame(width: 20, height: 15, alignment: .center)
                         default:
                             EmptyView()
                     }
@@ -70,6 +74,14 @@ struct InlineHUD: View {
             HStack {
                 if (type == .mic) {
                     Text(value.isZero ? "muted" : "unmuted")
+                        .foregroundStyle(.gray)
+                        .lineLimit(1)
+                        .allowsTightening(true)
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .contentTransition(.interpolate)
+                } else if type == .health {
+                    Text(value == 0 ? "Time to hydrate" : "Time to stretch")
                         .foregroundStyle(.gray)
                         .lineLimit(1)
                         .allowsTightening(true)
@@ -147,6 +159,8 @@ struct InlineHUD: View {
                 return "Backlight"
             case .mic:
                 return "Mic"
+            case .health:
+                return "Reminder"
             default:
                 return ""
         }

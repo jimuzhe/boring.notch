@@ -143,10 +143,18 @@ struct GeneralSettings: View {
     @Default(.nonNotchHeightMode) var nonNotchHeightMode
     @Default(.notchHeight) var notchHeight
     @Default(.notchHeightMode) var notchHeightMode
+    @Default(.openNotchWidth) var openNotchWidth
+    @Default(.openNotchHeight) var openNotchHeight
     @Default(.showOnAllDisplays) var showOnAllDisplays
     @Default(.automaticallySwitchDisplay) var automaticallySwitchDisplay
     @Default(.enableGestures) var enableGestures
     @Default(.openNotchOnHover) var openNotchOnHover
+    
+    // Health variables
+    @Default(.enableWaterReminder) var enableWaterReminder
+    @Default(.waterReminderInterval) var waterReminderInterval
+    @Default(.enablePostureReminder) var enablePostureReminder
+    @Default(.postureReminderInterval) var postureReminderInterval
     
 
     var body: some View {
@@ -258,6 +266,46 @@ struct GeneralSettings: View {
             } header: {
                 Text("Notch sizing")
             }
+            
+            Section {
+                Slider(value: $openNotchWidth, in: 400...1000, step: 10) {
+                    Text("Expanded notch width - \(openNotchWidth, specifier: "%.0f")")
+                }
+                .onChange(of: openNotchWidth) {
+                    NotificationCenter.default.post(name: .openNotchSizeChanged, object: nil)
+                }
+                
+                Slider(value: $openNotchHeight, in: 150...500, step: 10) {
+                    Text("Expanded notch height - \(openNotchHeight, specifier: "%.0f")")
+                }
+                .onChange(of: openNotchHeight) {
+                    NotificationCenter.default.post(name: .openNotchSizeChanged, object: nil)
+                }
+            } header: {
+                Text("Expanded notch sizing")
+            }
+            
+            Section {
+                Defaults.Toggle(key: .enableWaterReminder) {
+                    Text("Enable water reminder")
+                }
+                if enableWaterReminder {
+                    Slider(value: $waterReminderInterval, in: 10...240, step: 10) {
+                        Text("Water interval - \(waterReminderInterval, specifier: "%.0f") min")
+                    }
+                }
+                
+                Defaults.Toggle(key: .enablePostureReminder) {
+                    Text("Enable posture reminder")
+                }
+                if enablePostureReminder {
+                    Slider(value: $postureReminderInterval, in: 10...240, step: 10) {
+                        Text("Posture interval - \(postureReminderInterval, specifier: "%.0f") min")
+                    }
+                }
+            } header: {
+                Text("Health & Wellness")
+            }
 
             NotchBehaviour()
 
@@ -286,8 +334,9 @@ struct GeneralSettings: View {
             }
                 .disabled(!openNotchOnHover)
             if enableGestures {
-                Toggle("Change media with horizontal gestures", isOn: .constant(false))
-                    .disabled(true)
+                Defaults.Toggle(key: .changeMediaWithHorizontalGestures) {
+                    Text("Change media with horizontal gestures")
+                }
                 Defaults.Toggle(key: .closeGestureEnabled) {
                     Text("Close gesture")
                 }
@@ -682,6 +731,12 @@ struct Media: View {
                 Defaults.Toggle(key: .enableLyrics) {
                     HStack {
                         Text("Show lyrics below artist name")
+                        customBadge(text: "Beta")
+                    }
+                }
+                Defaults.Toggle(key: .showLyricsBelowNotch) {
+                    HStack {
+                        Text("Show lyrics below closed notch")
                         customBadge(text: "Beta")
                     }
                 }
@@ -1164,6 +1219,8 @@ struct Appearance: View {
     @Default(.useMusicVisualizer) var useMusicVisualizer
     @Default(.customVisualizers) var customVisualizers
     @Default(.selectedVisualizer) var selectedVisualizer
+    @Default(.focusWorkDuration) var focusWorkDuration
+    @Default(.focusBreakDuration) var focusBreakDuration
 
     let icons: [String] = ["logo2"]
     @State private var selectedIcon: String = "logo2"
@@ -1377,6 +1434,42 @@ struct Appearance: View {
             }
 
             Section {
+                Defaults.Toggle(key: .showFocusButton) {
+                    Text("Enable focus button")
+                }
+                if Defaults[.showFocusButton] {
+                    HStack {
+                        Text("Work Duration")
+                        Spacer()
+                        Text("\(Int(focusWorkDuration)) min")
+                            .foregroundColor(.secondary)
+                        Stepper("", value: $focusWorkDuration, in: 1...120)
+                            .labelsHidden()
+                    }
+                    HStack {
+                        Text("Break Duration")
+                        Spacer()
+                        Text("\(Int(focusBreakDuration)) min")
+                            .foregroundColor(.secondary)
+                        Stepper("", value: $focusBreakDuration, in: 1...60)
+                            .labelsHidden()
+                    }
+                    HStack {
+                        Text("Total Focus Time Today")
+                        Spacer()
+                        Text("\(Defaults[.focusTotalMinutesToday]) min")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Defaults.Toggle(key: .showScreenshot) {
+                    Text("Enable screenshot button")
+                }
+                if Defaults[.showScreenshot] {
+                    Defaults.Toggle(key: .hideNotchDuringScreenshot) {
+                        Text("Hide notch during screenshot")
+                    }
+                }
                 Defaults.Toggle(key: .showMirror) {
                     Text("Enable boring mirror")
                 }

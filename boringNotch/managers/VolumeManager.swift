@@ -375,4 +375,141 @@ extension Array where Element == Float32 {
     fileprivate var average: Float32? { isEmpty ? nil : reduce(0, +) / Float32(count) }
 }
 
+import Defaults
+import SwiftUI
+import AppKit
 
+class FocusManager: ObservableObject {
+    static let shared = FocusManager()
+    
+    enum State {
+        case idle
+        case working
+        case paused
+        case resting
+    }
+    
+    @Published var state: State = .idle
+    @Published var secondsElapsed: Int = 0 
+    @Published var focusSecondsElapsed: Int = 0 // total focus time for stats
+    
+    private var timer: Timer?
+    private var currentPhaseSecondsTotal: Int = 0
+    
+    // We can also compute percentage or remaining if needed, but the primary view is count-up
+    var isWorking: Bool { state == .working || (state == .paused && previousState == .working) }
+    private var previousState: State = .idle
+    
+    private init() {
+        checkDailyReset()
+    }
+    
+    private func checkDailyReset() {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let todayStr = formatter.string(from: Date())
+        
+        if Defaults[.focusLastRecordDate] != todayStr {
+            Defaults[.focusLastRecordDate] = todayStr
+            Defaults[.focusTotalMinutesToday] = 0
+        }
+    }
+    
+    public func startFocus() {
+        checkDailyReset()
+        previousState = .working
+        state = .working
+        currentPhaseSecondsTotal = Int(Defaults[.focusWorkDuration]) * 60
+        secondsElapsed = 0
+        focusSecondsElapsed = 0
+        
+        startTimer()
+        
+        DispatchQueue.main.async {
+            BoringViewCoordinator.shared.currentView = .focus
+        }
+    }
+    
+    public func pauseFocus() {
+        if state == .working || state == .resting {
+            previousState = state
+            timer?.invalidate()
+            timer = nil
+            state = .paused
+        }
+    }
+    
+    public func resumeFocus() {
+        if state == .paused {
+            state = previousState == .idle ? .working : previousState
+            startTimer()
+        }
+    }
+    
+    public func stopFocus() {
+        timer?.invalidate()
+        timer = nil
+        
+        // Save stats
+        if focusSecondsElapsed > 0 {
+            checkDailyReset()
+            Defaults[.focusTotalMinutesToday] += (focusSecondsElapsed / 60)
+        }
+        
+        state = .idle
+        previousState = .idle
+        secondsElapsed = 0
+        focusSecondsElapsed = 0
+        
+        DispatchQueue.main.async {
+            if BoringViewCoordinator.shared.currentView == .focus {
+                BoringViewCoordinator.shared.currentView = .home
+            }
+        }
+    }
+    
+    private func startBreak() {
+        previousState = .resting
+        state = .resting
+        currentPhaseSecondsTotal = Int(Defaults[.focusBreakDuration]) * 60
+        secondsElapsed = 0
+        startTimer()
+    }
+    
+    private func startTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.tick()
+        }
+    }
+    
+    private func tick() {
+        DispatchQueue.main.async {
+            if self.state == .working {
+                self.focusSecondsElapsed += 1
+            }
+            
+            self.secondsElapsed += 1
+            
+            if self.secondsElapsed >= self.currentPhaseSecondsTotal {
+                // Phase ended
+                if self.state == .working {
+                    self.startBreak()
+                    // Notification sound
+                    NSSound(named: "Glass")?.play()
+                } else if self.state == .resting {
+                    // Start next pomodoro
+                    self.startFocus()
+                    NSSound(named: "Bottle")?.play()
+                }
+            }
+        }
+    }
+    
+    // For closed notch UI
+    public func formatTime(_ seconds: Int) -> String {
+        let m = seconds / 60
+        let s = seconds % 60
+        return String(format: "%02d:%02d", m, s)
+    }
+}

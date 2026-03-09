@@ -269,11 +269,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let screenFrame = screen.frame
-        window.setFrameOrigin(
-            NSPoint(
-                x: screenFrame.origin.x + (screenFrame.width / 2) - window.frame.width / 2,
-                y: screenFrame.origin.y + screenFrame.height - window.frame.height
-            ))
+        let newFrame = NSRect(
+            x: screenFrame.origin.x + (screenFrame.width / 2) - windowSize.width / 2,
+            y: screenFrame.origin.y + screenFrame.height - windowSize.height,
+            width: windowSize.width,
+            height: windowSize.height
+        )
+        
+        window.setFrame(newFrame, display: true)
         window.alphaValue = 1
     }
 
@@ -301,6 +304,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in
                 self?.adjustWindowPosition()
                 self?.setupDragDetectors()
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name.openNotchSizeChanged, object: nil, queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.adjustWindowPosition()
+                self?.setupDragDetectors()
+                
+                self?.viewModels.values.forEach { vm in
+                    if vm.notchState == .open {
+                        withAnimation(.spring(response: 0.42, dampingFraction: 0.8, blendDuration: 0)) {
+                            vm.notchSize = openNotchSize
+                        }
+                    }
+                }
+                if let vm = self?.vm, vm.notchState == .open {
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.8, blendDuration: 0)) {
+                        vm.notchSize = openNotchSize
+                    }
+                }
             }
         }
 
@@ -432,6 +457,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.showOnboardingWindow(step: .musicPermission)
             }
         }
+        
+        HealthManager.shared.start()
 
         previousScreens = NSScreen.screens
     }
@@ -613,5 +640,94 @@ extension CGRect: @retroactive Hashable {
 
     public static func == (lhs: CGRect, rhs: CGRect) -> Bool {
         return lhs.origin == rhs.origin && lhs.size == rhs.size
+    }
+}
+
+class HealthManager: ObservableObject {
+    static let shared = HealthManager()
+    
+    private var waterTimer: Timer?
+    private var postureTimer: Timer?
+    private var cancellables = Set<AnyCancellable>()
+    
+    // Prevent the reminder from firing immediately on fresh startup/config
+    private var isFirstWaterConfig = true
+    private var isFirstPostureConfig = true
+
+    private init() {
+        setupObservers()
+    }
+    
+    private func setupObservers() {
+        Defaults.publisher(.enableWaterReminder)
+            .combineLatest(Defaults.publisher(.waterReminderInterval))
+            .sink { [weak self] enabled, interval in
+                self?.configureWaterTimer()
+            }
+            .store(in: &cancellables)
+            
+        Defaults.publisher(.enablePostureReminder)
+            .combineLatest(Defaults.publisher(.postureReminderInterval))
+            .sink { [weak self] enabled, interval in
+                self?.configurePostureTimer()
+            }
+            .store(in: &cancellables)
+    }
+    
+    private func configureWaterTimer() {
+        waterTimer?.invalidate()
+        if Defaults[.enableWaterReminder] {
+            let interval = max(1, Defaults[.waterReminderInterval]) * 60 // convert to seconds
+            waterTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+                self?.triggerReminder(type: .water)
+            }
+        }
+    }
+    
+    private func configurePostureTimer() {
+        postureTimer?.invalidate()
+        if Defaults[.enablePostureReminder] {
+            let interval = max(1, Defaults[.postureReminderInterval]) * 60 // convert to seconds
+            postureTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+                self?.triggerReminder(type: .posture)
+            }
+        }
+    }
+    
+    enum ReminderType {
+        case water
+        case posture
+    }
+
+    private func triggerReminder(type: ReminderType) {
+        DispatchQueue.main.async {
+            switch type {
+            case .water:
+                BoringViewCoordinator.shared.toggleSneakPeek(
+                    status: true,
+                    type: .health,
+                    duration: 6.0,
+                    value: 0, // 0 encodes water
+                    icon: "drop.fill"
+                )
+            case .posture:
+                BoringViewCoordinator.shared.toggleSneakPeek(
+                    status: true,
+                    type: .health,
+                    duration: 6.0,
+                    value: 1, // 1 encodes posture
+                    icon: "figure.walk"
+                )
+            }
+            
+            // Play a gentle subtle sound
+            NSSound(named: "Ping")?.play()
+        }
+    }
+    
+    public func start() {
+        // Just calling start() initializes the setup
+        configureWaterTimer()
+        configurePostureTimer()
     }
 }

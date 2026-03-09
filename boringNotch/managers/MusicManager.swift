@@ -107,6 +107,74 @@ class MusicManager: ObservableObject {
         activeController = nil
     }
 
+    func hasMultipleActiveControllers() -> Bool {
+        let activeCount = MediaControllerType.allCases.filter { isControllerTypeActive($0) }.count
+        return activeCount > 1
+    }
+
+    func switchToNextController(direction: PanDirection) -> Bool {
+        // If using NowPlayingController, use MediaRemote multi-app switching
+        if let nowPlayingController = activeController as? NowPlayingController {
+            let dir = direction == .right ? 1 : -1
+            // Must run off main thread (semaphore-based API)
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let switched = nowPlayingController.switchToNextClient(direction: dir)
+                if switched {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self?.forceUpdate()
+                    }
+                }
+            }
+            // Return true optimistically (we triggered the switch)
+            return true
+        }
+        
+        // Fallback: cycle through app-specific controllers by type
+        let allTypes = MediaControllerType.allCases
+        let activeTypes = allTypes.filter { isControllerTypeActive($0) }
+        
+        guard activeTypes.count > 1 else { return false }
+        
+        let currentType = Defaults[.mediaController]
+        
+        guard let currentIndex = activeTypes.firstIndex(of: currentType) else {
+            if let first = activeTypes.first {
+                Defaults[.mediaController] = first
+                setActiveControllerBasedOnPreference()
+                NotificationCenter.default.post(name: Notification.Name.mediaControllerChanged, object: nil)
+                return true
+            }
+            return false
+        }
+        
+        let step = direction == .left ? -1 : 1
+        let nextIndex = (currentIndex + step + activeTypes.count) % activeTypes.count
+        let candidate = activeTypes[nextIndex]
+        
+        if candidate != currentType {
+            Defaults[.mediaController] = candidate
+            setActiveControllerBasedOnPreference()
+            NotificationCenter.default.post(name: Notification.Name.mediaControllerChanged, object: nil)
+            return true
+        }
+        
+        return false
+    }
+
+    func isControllerTypeActive(_ type: MediaControllerType) -> Bool {
+        switch type {
+        case .nowPlaying:
+            // Check if there's any playing application in the system
+            return true // Fallback/Aggregation
+        case .appleMusic:
+            return NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.apple.Music" }
+        case .spotify:
+            return NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.spotify.client" }
+        case .youtubeMusic:
+            return NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == YouTubeMusicConfiguration.default.bundleIdentifier }
+        }
+    }
+
     // MARK: - Setup Methods
     private func createController(for type: MediaControllerType) -> (any MediaControllerProtocol)? {
         // Cleanup previous controller
@@ -431,8 +499,7 @@ class MusicManager: ObservableObject {
         do {
             let (data, response) = try await URLSession.shared.data(from: url)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                self.currentLyrics = ""
-                self.isFetchingLyrics = false
+                await fetchNeteaseLyrics(title: title, artist: artist)
                 return
             }
             if let jsonArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
@@ -440,19 +507,99 @@ class MusicManager: ObservableObject {
                 // Prefer plain lyrics (syncedLyrics may also be present)
                 let plain = (first["plainLyrics"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let synced = (first["syncedLyrics"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let resolved = plain.isEmpty ? synced : plain
+                var resolved = plain.isEmpty ? synced : plain
+                
+                // Convert traditional Chinese to simplified
+                if let zhHans = resolved.applyingTransform(StringTransform("Hant-Hans"), reverse: false) {
+                    resolved = zhHans
+                }
+                
                 self.currentLyrics = resolved
                 self.isFetchingLyrics = false
                 if !synced.isEmpty {
-                    self.syncedLyrics = self.parseLRC(synced)
+                    let finalSynced = synced.applyingTransform(StringTransform("Hant-Hans"), reverse: false) ?? synced
+                    self.syncedLyrics = self.parseLRC(finalSynced)
                 } else {
                     self.syncedLyrics = []
                 }
             } else {
+                await fetchNeteaseLyrics(title: title, artist: artist)
+            }
+        } catch {
+            await fetchNeteaseLyrics(title: title, artist: artist)
+        }
+    }
+
+    @MainActor
+    private func fetchNeteaseLyrics(title: String, artist: String) async {
+        let query = "\(title) \(artist)".trimmingCharacters(in: .whitespaces)
+        guard let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://music.163.com/api/search/get/web") else {
+            self.currentLyrics = ""
+            self.isFetchingLyrics = false
+            self.syncedLyrics = []
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("http://music.163.com", forHTTPHeaderField: "Referer")
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        
+        let bodyString = "s=\(encodedQuery)&type=1&offset=0&total=true&limit=1"
+        request.httpBody = bodyString.data(using: .utf8)
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let result = json["result"] as? [String: Any],
+                  let songs = result["songs"] as? [[String: Any]],
+                  let firstSong = songs.first,
+                  let songId = firstSong["id"] as? Int else {
                 self.currentLyrics = ""
                 self.isFetchingLyrics = false
                 self.syncedLyrics = []
+                return
             }
+            
+            // Now fetch the lyrics
+            let lyricUrlString = "https://music.163.com/api/song/lyric?id=\(songId)&lv=1&kv=1&tv=-1"
+            guard let lyricUrl = URL(string: lyricUrlString) else {
+                self.currentLyrics = ""
+                self.isFetchingLyrics = false
+                self.syncedLyrics = []
+                return
+            }
+            var lyricRequest = URLRequest(url: lyricUrl)
+            lyricRequest.setValue("http://music.163.com", forHTTPHeaderField: "Referer")
+            lyricRequest.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+            
+            let (lData, lResponse) = try await URLSession.shared.data(for: lyricRequest)
+            guard let lHttp = lResponse as? HTTPURLResponse, lHttp.statusCode == 200,
+                  let lJson = try JSONSerialization.jsonObject(with: lData) as? [String: Any],
+                  let lrc = lJson["lrc"] as? [String: Any],
+                  let lyricStr = lrc["lyric"] as? String else {
+                self.currentLyrics = ""
+                self.isFetchingLyrics = false
+                self.syncedLyrics = []
+                return
+            }
+            
+            var resolved = lyricStr.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let zhHans = resolved.applyingTransform(StringTransform("Hant-Hans"), reverse: false) {
+                resolved = zhHans
+            }
+            
+            self.currentLyrics = resolved
+            self.isFetchingLyrics = false
+            if !resolved.isEmpty {
+                self.syncedLyrics = self.parseLRC(resolved)
+            } else {
+                self.syncedLyrics = []
+            }
+            
         } catch {
             self.currentLyrics = ""
             self.isFetchingLyrics = false
@@ -463,21 +610,36 @@ class MusicManager: ObservableObject {
     // MARK: - Synced lyrics helpers
     private func parseLRC(_ lrc: String) -> [(time: Double, text: String)] {
         var result: [(Double, String)] = []
-        lrc.split(separator: "\n").forEach { lineSub in
-            let line = String(lineSub)
-            // Match [mm:ss.xx] or [m:ss]
-            let pattern = #"\[(\d{1,2}):(\d{2})(?:\.(\d{1,2}))?\]"#
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
-            let nsLine = line as NSString
-            if let match = regex.firstMatch(in: line, range: NSRange(location: 0, length: nsLine.length)) {
+        let lines = lrc.components(separatedBy: .newlines)
+        
+        let pattern = #"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        
+        for line in lines {
+            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedLine.isEmpty { continue }
+            
+            let nsLine = trimmedLine as NSString
+            let matches = regex.matches(in: trimmedLine, range: NSRange(location: 0, length: nsLine.length))
+            
+            for match in matches {
                 let minStr = nsLine.substring(with: match.range(at: 1))
                 let secStr = nsLine.substring(with: match.range(at: 2))
                 let csRange = match.range(at: 3)
                 let centiStr = csRange.location != NSNotFound ? nsLine.substring(with: csRange) : "0"
                 let minutes = Double(minStr) ?? 0
                 let seconds = Double(secStr) ?? 0
-                let centis = Double(centiStr) ?? 0
-                let time = minutes * 60 + seconds + centis / 100.0
+                
+                let fractions: Double
+                if centiStr.count == 3 {
+                    fractions = (Double(centiStr) ?? 0) / 1000.0
+                } else if centiStr.count == 2 {
+                    fractions = (Double(centiStr) ?? 0) / 100.0
+                } else {
+                    fractions = (Double(centiStr) ?? 0) / 10.0
+                }
+                
+                let time = minutes * 60 + seconds + fractions
                 let textStart = match.range.location + match.range.length
                 let text = nsLine.substring(from: textStart).trimmingCharacters(in: .whitespaces)
                 if !text.isEmpty {

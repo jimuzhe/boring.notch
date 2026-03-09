@@ -39,6 +39,7 @@ enum HideNotchOption: String, Defaults.Serializable {
 // Define notification names at file scope
 extension Notification.Name {
     static let mediaControllerChanged = Notification.Name("mediaControllerChanged")
+    static let openNotchSizeChanged = Notification.Name("openNotchSizeChanged")
 }
 
 // Media controller types for selection in settings
@@ -90,6 +91,8 @@ extension Defaults.Keys {
     )
     static let nonNotchHeight = Key<CGFloat>("nonNotchHeight", default: 32)
     static let notchHeight = Key<CGFloat>("notchHeight", default: 32)
+    static let openNotchWidth = Key<CGFloat>("openNotchWidth", default: 600)
+    static let openNotchHeight = Key<CGFloat>("openNotchHeight", default: 190)
     //static let openLastTabByDefault = Key<Bool>("openLastTabByDefault", default: false)
     static let showOnLockScreen = Key<Bool>("showOnLockScreen", default: false)
     static let hideFromScreenRecording = Key<Bool>("hideFromScreenRecording", default: false)
@@ -98,6 +101,8 @@ extension Defaults.Keys {
     static let showEmojis = Key<Bool>("showEmojis", default: false)
     //static let alwaysShowTabs = Key<Bool>("alwaysShowTabs", default: true)
     static let showMirror = Key<Bool>("showMirror", default: false)
+    static let showScreenshot = Key<Bool>("showScreenshot", default: false)
+    static let hideNotchDuringScreenshot = Key<Bool>("hideNotchDuringScreenshot", default: true)
     static let mirrorShape = Key<MirrorShapeEnum>("mirrorShape", default: MirrorShapeEnum.rectangle)
     static let settingsIconInNotch = Key<Bool>("settingsIconInNotch", default: true)
     static let lightingEffect = Key<Bool>("lightingEffect", default: true)
@@ -121,6 +126,8 @@ extension Defaults.Keys {
     static let enableGestures = Key<Bool>("enableGestures", default: true)
     static let closeGestureEnabled = Key<Bool>("closeGestureEnabled", default: true)
     static let gestureSensitivity = Key<CGFloat>("gestureSensitivity", default: 200.0)
+    static let changeMediaWithHorizontalGestures = Key<Bool>("changeMediaWithHorizontalGestures", default: false)
+    static let currentNotchView = Key<NotchViews>("currentNotchView", default: .home)
     
     // MARK: Media playback
     static let coloredSpectrogram = Key<Bool>("coloredSpectrogram", default: true)
@@ -129,6 +136,7 @@ extension Defaults.Keys {
     static let waitInterval = Key<Double>("waitInterval", default: 3)
     static let showShuffleAndRepeat = Key<Bool>("showShuffleAndRepeat", default: false)
     static let enableLyrics = Key<Bool>("enableLyrics", default: false)
+    static let showLyricsBelowNotch = Key<Bool>("showLyricsBelowNotch", default: false)
     static let musicControlSlots = Key<[MusicControlButton]>(
         "musicControlSlots",
         default: MusicControlButton.defaultLayout
@@ -138,6 +146,19 @@ extension Defaults.Keys {
         default: MusicControlButton.defaultLayout.count
     )
     
+    // MARK: Health Reminders
+    static let enableWaterReminder = Key<Bool>("enableWaterReminder", default: false)
+    static let waterReminderInterval = Key<Double>("waterReminderInterval", default: 60) // minutes
+    static let enablePostureReminder = Key<Bool>("enablePostureReminder", default: false)
+    static let postureReminderInterval = Key<Double>("postureReminderInterval", default: 45) // minutes
+
+    // MARK: Focus
+    static let showFocusButton = Key<Bool>("showFocusButton", default: true)
+    static let focusWorkDuration = Key<Double>("focusWorkDuration", default: 25)
+    static let focusBreakDuration = Key<Double>("focusBreakDuration", default: 5)
+    static let focusTotalMinutesToday = Key<Int>("focusTotalMinutesToday", default: 0)
+    static let focusLastRecordDate = Key<String>("focusLastRecordDate", default: "")
+
     // MARK: Battery
     static let showPowerStatusNotifications = Key<Bool>("showPowerStatusNotifications", default: true)
     static let showBatteryIndicator = Key<Bool>("showBatteryIndicator", default: true)

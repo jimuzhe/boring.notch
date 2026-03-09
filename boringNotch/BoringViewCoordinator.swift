@@ -18,6 +18,7 @@ enum SneakContentType {
     case mic
     case battery
     case download
+    case health
 }
 
 struct sneakPeek {
@@ -50,7 +51,11 @@ struct ExpandedItem {
 class BoringViewCoordinator: ObservableObject {
     static let shared = BoringViewCoordinator()
 
-    @Published var currentView: NotchViews = .home
+    @Published var currentView: NotchViews = Defaults[.currentNotchView] {
+        didSet {
+            Defaults[.currentNotchView] = currentView
+        }
+    }
     @Published var helloAnimationRunning: Bool = false
     private var sneakPeekDispatch: DispatchWorkItem?
     private var expandingViewDispatch: DispatchWorkItem?

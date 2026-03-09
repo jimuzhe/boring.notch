@@ -12,6 +12,7 @@ struct BoringHeader: View {
     @EnvironmentObject var vm: BoringViewModel
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var coordinator = BoringViewCoordinator.shared
+    @ObservedObject var focusManager = FocusManager.shared
     @StateObject var tvm = ShelfStateViewModel.shared
     var body: some View {
         HStack(spacing: 0) {
@@ -42,6 +43,40 @@ struct BoringHeader: View {
                         OpenNotchHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon)
                             .transition(.scale(scale: 0.8).combined(with: .opacity))
                     } else {
+
+                        if Defaults[.showScreenshot] {
+                            Button(action: {
+                                if Defaults[.hideNotchDuringScreenshot] {
+                                    DispatchQueue.main.async {
+                                        NSApp.windows.forEach { $0.alphaValue = 0 }
+                                    }
+                                }
+                                DispatchQueue.global(qos: .userInitiated).async {
+                                    let task = Process()
+                                    task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                                    task.arguments = ["-i", "-c"]
+                                    try? task.run()
+                                    task.waitUntilExit()
+                                    
+                                    if Defaults[.hideNotchDuringScreenshot] {
+                                        DispatchQueue.main.async {
+                                            NSApp.windows.forEach { $0.alphaValue = 1 }
+                                        }
+                                    }
+                                }
+                            }) {
+                                Capsule()
+                                    .fill(.black)
+                                    .frame(width: 30, height: 30)
+                                    .overlay {
+                                        Image(systemName: "camera.viewfinder")
+                                            .foregroundColor(.white)
+                                            .padding()
+                                            .imageScale(.medium)
+                                    }
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
                         if Defaults[.showMirror] {
                             Button(action: {
                                 vm.toggleCameraPreview()
@@ -109,6 +144,64 @@ struct BoringHeader: View {
     }
 }
 
-#Preview {
-    BoringHeader().environmentObject(BoringViewModel())
+struct BoringHeader_Previews: PreviewProvider {
+    static var previews: some View {
+        BoringHeader().environmentObject(BoringViewModel())
+    }
+}
+
+// MARK: - FocusExpandedView 
+struct FocusExpandedView: View {
+    @ObservedObject var focusManager = FocusManager.shared
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            Text(focusManager.state == .working ? "Focus" : "Break")
+                .font(.headline)
+                .foregroundColor(.white)
+            
+            Text(focusManager.formatTime(focusManager.secondsElapsed))
+                .font(.system(size: 48, weight: .bold, design: .monospaced))
+                .foregroundColor(focusManager.isWorking ? .orange : .green)
+            
+            HStack(spacing: 24) {
+                if focusManager.state == .working || focusManager.state == .resting {
+                    Button(action: { focusManager.pauseFocus() }) {
+                        Image(systemName: "pause.circle.fill")
+                            .resizable()
+                            .frame(width: 40, height: 40)
+                            .foregroundColor(.orange)
+                    }
+                    .buttonStyle(.plain)
+                } else if focusManager.state == .paused {
+                    Button(action: { focusManager.resumeFocus() }) {
+                        Image(systemName: "play.circle.fill")
+                            .resizable()
+                            .frame(width: 40, height: 40)
+                            .foregroundColor(.green)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button(action: { focusManager.startFocus() }) {
+                        Image(systemName: "play.circle.fill")
+                            .resizable()
+                            .frame(width: 40, height: 40)
+                            .foregroundColor(.white)
+                    }
+                    .buttonStyle(.plain)
+                }
+                
+                Button(action: { focusManager.stopFocus() }) {
+                    Image(systemName: "stop.circle.fill")
+                        .resizable()
+                        .frame(width: 40, height: 40)
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 4)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 }

@@ -24,8 +24,9 @@ public enum NotchState {
     case open
 }
 
-public enum NotchViews {
+public enum NotchViews: String, CaseIterable, Defaults.Serializable {
     case home
+    case focus
     case shelf
 }
 

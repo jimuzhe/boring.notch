@@ -55,10 +55,15 @@ struct SystemEventIndicatorModifier: View {
                         .contentTransition(.interpolate)
                         .frame(width: 20, height: 15)
                         .foregroundStyle(.white)
+                case .health:
+                    Image(systemName: icon)
+                        .contentTransition(.symbolEffect)
+                        .frame(width: 20, height: 15)
+                        .foregroundStyle(.white)
                 default:
                     EmptyView()
             }
-            if (eventType != .mic) {
+            if (eventType != .mic && eventType != .health) {
                 DraggableProgressBar(value: $value)
                 if Defaults[.showClosedNotchHUDPercentage] {
                     Text("\(Int(value * 100))%")
@@ -67,8 +72,13 @@ struct SystemEventIndicatorModifier: View {
                         .monospacedDigit()
                         .frame(width: 35, alignment: .trailing)
                 }
-            } else {
+            } else if eventType == .mic {
                 Text("Mic \(value > 0 ? "unmuted" : "muted")")
+                    .foregroundStyle(.gray)
+                    .lineLimit(1)
+                    .allowsTightening(true)
+            } else if eventType == .health {
+                 Text(value == 0 ? "Time to hydrate! 💧" : "Time to stretch! 🧍")
                     .foregroundStyle(.gray)
                     .lineLimit(1)
                     .allowsTightening(true)
